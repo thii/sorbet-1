@@ -355,7 +355,7 @@ package(default_visibility = ["//visibility:public"])
                 patches = [
                     "@com_stripe_ruby_typer//third_party/ruby:gc-remove-write-barrier.patch",
                     "@com_stripe_ruby_typer//third_party/ruby:vm-method-type-sorbet.patch",
-                    "@com_stripe_ruby_typer//third_party/ruby:is-lambda-ifunc.patch",
+                    # "@com_stripe_ruby_typer//third_party/ruby:is-lambda-ifunc.patch",
                     "@com_stripe_ruby_typer//third_party/ruby:init-sorbet-t-modules.patch",
                 ],
                 patch_tool = "patch",
