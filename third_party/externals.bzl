@@ -1,6 +1,9 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_file")
 load("//third_party/cargo:crates.bzl", "raze_fetch_remote_crates")
 
+def _sorbet_ruby_urls(sha):
+    return _github_public_urls("sorbet/ruby/archive/{}.tar.gz".format(sha))
+
 # We define our externals here instead of directly in WORKSPACE
 def register_sorbet_dependencies():
     # At some point the builtin @platforms package willbe removed, and we'll no longer be able to refer to
@@ -349,28 +352,22 @@ package(default_visibility = ["//visibility:public"])
     )
 
     for apply_patch in [True, False]:
-        urls = _ruby_urls("2.7/ruby-2.7.2.tar.gz")
-        sha256 = "6e5706d0d4ee4e1e2f883db9d768586b4d06567debea353c796ec45e8321c3d4"
-        strip_prefix = "ruby-2.7.2"
-
         if apply_patch:
+            sorbet_ruby_commit = "2f898d418b13c427d0c8948e64a6443de9480e7a"
+            sorbet_ruby_sha256 = "3ba20f0141ac27459c0a4d3bf0348a6cfec97f5df67ccf8fbdf3e91fda3dc8c2"
+            strip_prefix = "ruby-{}".format(sorbet_ruby_commit)
             http_archive(
                 name = "sorbet_ruby_2_7",
-                urls = urls,
-                sha256 = sha256,
+                urls = _sorbet_ruby_urls(sorbet_ruby_commit),
+                sha256 = sorbet_ruby_sha256,
                 strip_prefix = strip_prefix,
                 build_file = ruby_patched_build,
-                # If you're trying to use `git diff` to generate this patch, pass the `--no-prefix` flag
-                # (Removes the `a/` and `b/` prefixes that `patch` doesn't understand.)
-                patches = [
-                    "@com_stripe_ruby_typer//third_party/ruby:gc-remove-write-barrier.patch",
-                    "@com_stripe_ruby_typer//third_party/ruby:vm-method-type-sorbet.patch",
-                    "@com_stripe_ruby_typer//third_party/ruby:is-lambda-ifunc.patch",
-                    "@com_stripe_ruby_typer//third_party/ruby:init-sorbet-t-modules.patch",
-                ],
-                patch_tool = "patch",
             )
         else:
+            urls = _ruby_urls("2.7/ruby-2.7.2.tar.gz")
+            sha256 = "6e5706d0d4ee4e1e2f883db9d768586b4d06567debea353c796ec45e8321c3d4"
+            strip_prefix = "ruby-2.7.2"
+
             http_archive(
                 name = "sorbet_ruby_2_7_unpatched",
                 urls = urls,
