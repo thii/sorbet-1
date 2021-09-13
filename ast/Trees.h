@@ -501,14 +501,21 @@ public:
     static constexpr int EXPECTED_EXCEPTION_COUNT = 2;
     using EXCEPTION_store = InlinedVector<ExpressionPtr, EXPECTED_EXCEPTION_COUNT>;
 
+    // There are two cases here: Either "exceptionsExpr" is an empty tree, in
+    // which case "exceptions" is a list of expressions, each corresponding to
+    // one matched exception class; or "exceptionsExpr" is non-null, in which
+    // case "exceptionsExpr" is an expression evaluating to an array of
+    // exception classes, and "exceptions" must be empty.
     EXCEPTION_store exceptions;
+    ExpressionPtr exceptionsExpr;
 
     // If present, var is always an UnresolvedIdent[kind=Local] up until the
     // namer, at which point it is a Local.
     ExpressionPtr var;
     ExpressionPtr body;
 
-    RescueCase(core::LocOffsets loc, EXCEPTION_store exceptions, ExpressionPtr var, ExpressionPtr body);
+    RescueCase(core::LocOffsets loc, EXCEPTION_store exceptions, ExpressionPtr exceptionsExpr, ExpressionPtr var,
+               ExpressionPtr body);
 
     ExpressionPtr deepCopy() const;
 
@@ -518,7 +525,7 @@ public:
 
     void _sanityCheck();
 };
-CheckSize(RescueCase, 48, 8);
+CheckSize(RescueCase, 56, 8);
 
 EXPRESSION(Rescue) {
 public:

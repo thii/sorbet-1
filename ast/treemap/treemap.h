@@ -279,6 +279,9 @@ private:
             el = mapIt(std::move(el), ctx);
         }
 
+        cast_tree_nonnull<RescueCase>(v).exceptionsExpr =
+            mapIt(std::move(cast_tree_nonnull<RescueCase>(v).exceptionsExpr), ctx);
+
         cast_tree_nonnull<RescueCase>(v).var = mapIt(std::move(cast_tree_nonnull<RescueCase>(v).var), ctx);
 
         cast_tree_nonnull<RescueCase>(v).body = mapIt(std::move(cast_tree_nonnull<RescueCase>(v).body), ctx);

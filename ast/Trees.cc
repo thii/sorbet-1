@@ -225,8 +225,10 @@ Return::Return(core::LocOffsets loc, ExpressionPtr expr) : loc(loc), expr(std::m
     _sanityCheck();
 }
 
-RescueCase::RescueCase(core::LocOffsets loc, EXCEPTION_store exceptions, ExpressionPtr var, ExpressionPtr body)
-    : loc(loc), exceptions(std::move(exceptions)), var(std::move(var)), body(std::move(body)) {
+RescueCase::RescueCase(core::LocOffsets loc, EXCEPTION_store exceptions, ExpressionPtr exceptionsExpr,
+                       ExpressionPtr var, ExpressionPtr body)
+    : loc(loc), exceptions(std::move(exceptions)), exceptionsExpr(std::move(exceptionsExpr)), var(std::move(var)),
+      body(std::move(body)) {
     categoryCounterInc("trees", "rescuecase");
     histogramInc("trees.rescueCase.exceptions", this->exceptions.size());
     _sanityCheck();
@@ -841,15 +843,19 @@ string Assign::toStringWithTabs(const core::GlobalState &gs, int tabs) const {
 string RescueCase::toStringWithTabs(const core::GlobalState &gs, int tabs) const {
     fmt::memory_buffer buf;
     fmt::format_to(std::back_inserter(buf), "rescue");
-    bool first = true;
-    for (auto &exception : this->exceptions) {
-        if (first) {
-            first = false;
-            fmt::format_to(std::back_inserter(buf), " ");
-        } else {
-            fmt::format_to(std::back_inserter(buf), ", ");
+    if (!isa_tree<EmptyTree>(this->exceptionsExpr)) {
+        fmt::format_to(std::back_inserter(buf), " *({})", this->exceptionsExpr.toStringWithTabs(gs, tabs));
+    } else {
+        bool first = true;
+        for (auto &exception : this->exceptions) {
+            if (first) {
+                first = false;
+                fmt::format_to(std::back_inserter(buf), " ");
+            } else {
+                fmt::format_to(std::back_inserter(buf), ", ");
+            }
+            fmt::format_to(std::back_inserter(buf), "{}", exception.toStringWithTabs(gs, tabs));
         }
-        fmt::format_to(std::back_inserter(buf), "{}", exception.toStringWithTabs(gs, tabs));
     }
     fmt::format_to(std::back_inserter(buf), " => {}\n", this->var.toStringWithTabs(gs, tabs));
     printTabs(buf, tabs);
@@ -868,6 +874,8 @@ string RescueCase::showRaw(const core::GlobalState &gs, int tabs) {
     }
     printTabs(buf, tabs + 1);
     fmt::format_to(std::back_inserter(buf), "]\n");
+    printTabs(buf, tabs + 1);
+    fmt::format_to(std::back_inserter(buf), "exceptionsExpr = {}\n", this->exceptionsExpr.showRaw(gs, tabs + 1));
     printTabs(buf, tabs + 1);
     fmt::format_to(std::back_inserter(buf), "var = {}\n", this->var.showRaw(gs, tabs + 1));
     printTabs(buf, tabs + 1);

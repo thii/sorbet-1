@@ -1850,19 +1850,21 @@ ExpressionPtr node2TreeImpl(DesugarContext dctx, unique_ptr<parser::Node> what) 
             [&](parser::Resbody *resbody) {
                 RescueCase::EXCEPTION_store exceptions;
                 auto exceptionsExpr = node2TreeImpl(dctx, std::move(resbody->exception));
-                if (isa_tree<EmptyTree>(exceptionsExpr)) {
-                    // No exceptions captured
-                } else if (auto exceptionsArray = cast_tree<Array>(exceptionsExpr)) {
-                    ENFORCE(exceptionsArray != nullptr, "exception array cast failed");
 
+                bool convertedToStore = false;
+
+                if (isa_tree<EmptyTree>(exceptionsExpr)) {
+                    // No exceptions captured, so an empty EXCEPTION_store will do.
+                    convertedToStore = true;
+                } else if (auto exceptionsArray = cast_tree<Array>(exceptionsExpr)) {
                     for (auto &elem : exceptionsArray->elems) {
                         exceptions.emplace_back(std::move(elem));
                     }
+                    convertedToStore = true;
                 } else if (auto exceptionsSend = cast_tree<Send>(exceptionsExpr)) {
                     ENFORCE(exceptionsSend->fun == core::Names::splat() || exceptionsSend->fun == core::Names::toA() ||
                                 exceptionsSend->fun == core::Names::concat(),
                             "Unknown exceptionSend function");
-                    exceptions.emplace_back(std::move(exceptionsExpr));
                 } else {
                     Exception::raise("Bad inner node type");
                 }
@@ -1890,8 +1892,9 @@ ExpressionPtr node2TreeImpl(DesugarContext dctx, unique_ptr<parser::Node> what) 
                                        std::move(body));
                 }
 
-                ExpressionPtr res =
-                    make_expression<RescueCase>(loc, std::move(exceptions), MK::Local(varLoc, var), std::move(body));
+                ExpressionPtr res = make_expression<RescueCase>(
+                    loc, std::move(exceptions), convertedToStore ? MK::EmptyTree() : std::move(exceptionsExpr),
+                    MK::Local(varLoc, var), std::move(body));
                 result = std::move(res);
             },
             [&](parser::Ensure *ensure) {

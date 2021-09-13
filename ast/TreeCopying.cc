@@ -82,7 +82,8 @@ ExpressionPtr deepCopy(const void *avoid, const Tag tag, const void *tree, bool 
 
         case Tag::RescueCase: {
             auto *exp = reinterpret_cast<const RescueCase *>(tree);
-            return make_expression<RescueCase>(exp->loc, deepCopyVec(avoid, exp->exceptions), deepCopy(avoid, exp->var),
+            return make_expression<RescueCase>(exp->loc, deepCopyVec(avoid, exp->exceptions),
+                                               deepCopy(avoid, exp->exceptionsExpr), deepCopy(avoid, exp->var),
                                                deepCopy(avoid, exp->body));
         }
 

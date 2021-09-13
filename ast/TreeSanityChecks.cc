@@ -172,6 +172,7 @@ void Rescue::_sanityCheck() {
 }
 
 void RescueCase::_sanityCheck() {
+    ENFORCE(isa_tree<EmptyTree>(exceptionsExpr) || exceptions.empty());
     ENFORCE(var);
     ENFORCE(body);
     for (auto &node : exceptions) {
