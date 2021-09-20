@@ -81,7 +81,7 @@ struct Import {
     Import(PackageName &&name, ImportType type) : name(std::move(name)), type(type) {}
 };
 
-struct PackageInfo {
+struct PackageInfoImpl {
     // The possible path prefixes associated with files in the package, including path separator at end.
     vector<std::string> packagePathPrefixes;
     PackageName name;
@@ -101,20 +101,20 @@ class PackageDB final {
 private:
     // The only thread that is allowed write access to this class.
     const std::thread::id owner;
-    UnorderedMap<std::string, shared_ptr<const PackageInfo>> packageInfoByPathPrefix;
+    UnorderedMap<std::string, shared_ptr<const PackageInfoImpl>> packageInfoByPathPrefix;
     bool finalized = false;
-    UnorderedMap<core::NameRef, shared_ptr<const PackageInfo>> packageInfoByMangledName;
+    UnorderedMap<core::NameRef, shared_ptr<const PackageInfoImpl>> packageInfoByMangledName;
 
 public:
     PackageDB() : owner(this_thread::get_id()) {}
 
-    void addPackage(core::Context ctx, shared_ptr<PackageInfo> pkg) {
+    void addPackage(core::Context ctx, shared_ptr<PackageInfoImpl> pkg) {
         ENFORCE(owner == this_thread::get_id());
         if (finalized) {
             Exception::raise("Cannot add additional packages after finalizing PackageDB");
         }
         if (pkg == nullptr) {
-            // There was an error creating a PackageInfo for this file, and getPackageInfo has already surfaced that
+            // There was an error creating a PackageInfoImpl for this file, and getPackageInfo has already surfaced that
             // error to the user. Nothing to do here.
             return;
         }
@@ -140,9 +140,9 @@ public:
     }
 
     /**
-     * Given a file of type PACKAGE, return its PackageInfo or nullptr if one does not exist.
+     * Given a file of type PACKAGE, return its PackageInfoImpl or nullptr if one does not exist.
      */
-    const PackageInfo *getPackageByFile(core::Context ctx, core::FileRef packageFile) const {
+    const PackageInfoImpl *getPackageByFile(core::Context ctx, core::FileRef packageFile) const {
         const std::string_view path = packageFile.data(ctx).path();
         const auto &it = packageInfoByPathPrefix.find(path.substr(0, path.find_last_of('/') + 1));
         if (it == packageInfoByPathPrefix.end()) {
@@ -155,7 +155,7 @@ public:
      * Given the mangled name for a package (e.g., Foo::Bar's mangled name is Foo_Bar_Package), return that package's
      * info or nullptr if it does not exist.
      */
-    const PackageInfo *getPackageByMangledName(core::NameRef name) const {
+    const PackageInfoImpl *getPackageByMangledName(core::NameRef name) const {
         const auto &it = packageInfoByMangledName.find(name);
         if (it == packageInfoByMangledName.end()) {
             return nullptr;
@@ -166,7 +166,7 @@ public:
     /**
      * Given a context, return the active package or nullptr if one does not exist.
      */
-    const PackageInfo *getPackageForContext(core::Context ctx) const {
+    const PackageInfoImpl *getPackageForContext(core::Context ctx) const {
         if (!finalized) {
             Exception::raise("Cannot map files to packages until all packages are added and PackageDB is finalized");
         }
@@ -333,14 +333,14 @@ bool sharesPrefix(const vector<core::NameRef> &a, const vector<core::NameRef> &b
 // Visitor that ensures for constants defined within a package that all have the package as a
 // prefix.
 class EnforcePackagePrefix final {
-    const PackageInfo *pkg;
+    const PackageInfoImpl *pkg;
     const bool isTestFile;
     vector<core::NameRef> nameParts;
     int rootConsts = 0;
     int skipPush = 0;
 
 public:
-    EnforcePackagePrefix(const PackageInfo *pkg, bool isTestFile) : pkg(pkg), isTestFile(isTestFile) {
+    EnforcePackagePrefix(const PackageInfoImpl *pkg, bool isTestFile) : pkg(pkg), isTestFile(isTestFile) {
         ENFORCE(pkg != nullptr);
     }
 
@@ -449,7 +449,7 @@ private:
 };
 
 struct PackageInfoFinder {
-    unique_ptr<PackageInfo> info = nullptr;
+    unique_ptr<PackageInfoImpl> info = nullptr;
     vector<FullyQualifiedName> exported;
 
     ast::ExpressionPtr postTransformSend(core::MutableContext ctx, ast::ExpressionPtr tree) {
@@ -523,7 +523,7 @@ struct PackageInfoFinder {
             }
         } else if (info == nullptr) {
             auto nameTree = ast::cast_tree<ast::UnresolvedConstantLit>(classDef.name);
-            info = make_unique<PackageInfo>();
+            info = make_unique<PackageInfoImpl>();
             checkPackageName(ctx, nameTree);
             info->name = getPackageName(ctx, nameTree);
             info->loc = core::Loc(ctx.file, classDef.loc);
@@ -688,7 +688,7 @@ bool pathExists(const std::string &path) {
 
 // Sanity checks package files, mutates arguments to export / export_methods to point to item in namespace,
 // builds up the expression injected into packages that import the package, and codegens the <PackagedMethods>  module.
-unique_ptr<PackageInfo> getPackageInfo(core::MutableContext ctx, ast::ParsedFile &package,
+unique_ptr<PackageInfoImpl> getPackageInfo(core::MutableContext ctx, ast::ParsedFile &package,
                                        const vector<std::string> &extraPackageFilesDirectoryPrefixes) {
     ENFORCE(package.file.exists());
     ENFORCE(package.file.data(ctx).sourceType == core::File::Type::Package);
@@ -743,18 +743,18 @@ public:
 };
 
 class ImportTreeBuilder final {
-    // PackageInfo package; // The package we are building an import tree for.
+    // PackageInfoImpl package; // The package we are building an import tree for.
     core::NameRef pkgMangledName;
     ImportTree root;
 
 public:
-    ImportTreeBuilder(const PackageInfo &package) : pkgMangledName(package.name.mangledName) {}
+    ImportTreeBuilder(const PackageInfoImpl &package) : pkgMangledName(package.name.mangledName) {}
     ImportTreeBuilder(const ImportTreeBuilder &) = delete;
     ImportTreeBuilder(ImportTreeBuilder &&) = default;
     ImportTreeBuilder &operator=(const ImportTreeBuilder &) = delete;
     ImportTreeBuilder &operator=(ImportTreeBuilder &&) = default;
 
-    void mergeImports(const PackageInfo &importedPackage, const Import &import) {
+    void mergeImports(const PackageInfoImpl &importedPackage, const Import &import) {
         for (const auto &exportedFqn : importedPackage.exports) {
             addImport(importedPackage, import.name.loc, exportedFqn, import.type);
         }
@@ -768,7 +768,7 @@ public:
     }
 
 private:
-    void addImport(const PackageInfo &importedPackage, core::LocOffsets loc, const FullyQualifiedName &exportFqn,
+    void addImport(const PackageInfoImpl &importedPackage, core::LocOffsets loc, const FullyQualifiedName &exportFqn,
                    ImportType importType) {
         ImportTree *node = &root;
         for (auto nameRef : exportFqn.parts) {
@@ -950,7 +950,7 @@ ast::ParsedFile rewritePackage(core::Context ctx, ast::ParsedFile file, const Pa
 }
 
 ast::ParsedFile rewritePackagedFile(core::Context ctx, ast::ParsedFile file, core::NameRef packageMangledName,
-                                    const PackageInfo *pkg, bool isTestFile) {
+                                    const PackageInfoImpl *pkg, bool isTestFile) {
     if (ast::isa_tree<ast::EmptyTree>(file.tree)) {
         // Nothing to wrap. This occurs when a file is marked typed: Ignore.
         return file;
