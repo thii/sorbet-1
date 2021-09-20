@@ -10,6 +10,7 @@
 #include "common/formatting.h"
 #include "common/sort.h"
 #include "core/Unfreeze.h"
+#include "core/packages/PackageInfo.h"
 #include "core/errors/packager.h"
 #include <sys/stat.h>
 
@@ -81,7 +82,7 @@ struct Import {
     Import(PackageName &&name, ImportType type) : name(std::move(name)), type(type) {}
 };
 
-class PackageInfoImpl final : public PackageInfo {
+class PackageInfoImpl final : public sorbet::core::packages::PackageInfo {
 public:
     // The possible path prefixes associated with files in the package, including path separator at end.
     vector<std::string> packagePathPrefixes;
@@ -990,10 +991,6 @@ bool checkContainsAllPackages(const core::GlobalState &gs, const vector<ast::Par
 }
 
 } // namespace
-
-PackageInfo::~PackageInfo() {
-    // see https://eli.thegreenplace.net/2010/11/13/pure-virtual-destructors-in-c
-}
 
 vector<ast::ParsedFile> Packager::run(core::GlobalState &gs, WorkerPool &workers, vector<ast::ParsedFile> files,
                                       const vector<std::string> &extraPackageFilesDirectoryPrefixes) {

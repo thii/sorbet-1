@@ -86,16 +86,6 @@ public:
 
     Packager() = delete;
 };
-
-class PackageInfo {
-public:
-    virtual ~PackageInfo() = 0;
-    PackageInfo() = default;
-    PackageInfo(PackageInfo &) = delete;
-    PackageInfo(const PackageInfo &) = delete;
-    PackageInfo &operator=(PackageInfo &&) = delete;
-    PackageInfo &operator=(const PackageInfo &) = delete;
-};
 } // namespace sorbet::packager
 
 #endif // SORBET_REWRITER_PACKAGE_H

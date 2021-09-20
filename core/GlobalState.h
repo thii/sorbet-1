@@ -8,6 +8,7 @@
 #include "core/Names.h"
 #include "core/Symbols.h"
 #include "core/lsp/Query.h"
+#include "core/packages/PackageInfo.h"
 #include "main/pipeline/semantic_extension/SemanticExtension.h"
 #include <memory>
 
@@ -149,6 +150,8 @@ public:
                                                     const std::shared_ptr<File> &withWhat);
     static std::unique_ptr<GlobalState> markFileAsTombStone(std::unique_ptr<GlobalState>, FileRef fref);
     FileRef findFileByPath(std::string_view path) const;
+
+    NameRef enterPackage(std::unique_ptr<packages::PackageInfo> pkg);
 
     void mangleRenameSymbol(SymbolRef what, NameRef origName);
     spdlog::logger &tracer() const;
@@ -296,6 +299,9 @@ private:
     UnorderedSet<int> suppressedErrorClasses;
     UnorderedSet<int> onlyErrorClasses;
     bool wasModified_ = false;
+
+    UnorderedMap<NameRef, std::unique_ptr<packages::PackageInfo>> packages;
+    UnorderedMap<std::string, NameRef> packagesByPathPrefix;
 
     bool freezeSymbolTable();
     bool freezeNameTable();
