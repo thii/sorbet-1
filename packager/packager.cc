@@ -267,15 +267,15 @@ bool sharesPrefix(const vector<core::NameRef> &a, const vector<core::NameRef> &b
 // Visitor that ensures for constants defined within a package that all have the package as a
 // prefix.
 class EnforcePackagePrefix final {
-    const PackageInfoImpl *pkg;
+    const PackageInfoImpl &pkg;
     const bool isTestFile;
     vector<core::NameRef> nameParts;
     int rootConsts = 0;
     int skipPush = 0;
 
 public:
-    EnforcePackagePrefix(const PackageInfoImpl *pkg, bool isTestFile) : pkg(pkg), isTestFile(isTestFile) {
-        ENFORCE(pkg != nullptr);
+    EnforcePackagePrefix(const PackageInfoImpl &pkg, bool isTestFile) : pkg(pkg), isTestFile(isTestFile) {
+        ENFORCE(pkg.exists());
     }
 
     ast::ExpressionPtr preTransformClassDef(core::Context ctx, ast::ExpressionPtr tree) {
@@ -375,9 +375,9 @@ private:
 
     const vector<core::NameRef> &requiredNamespace() const {
         if (isTestFile) {
-            return pkg->name.fullTestPkgName.parts;
+            return pkg.name.fullTestPkgName.parts;
         } else {
-            return pkg->name.fullName.parts;
+            return pkg.name.fullName.parts;
         }
     }
 };
@@ -800,7 +800,7 @@ ast::ParsedFile rewritePackagedFile(core::Context ctx, ast::ParsedFile file, cor
     }
 
     auto &rootKlass = ast::cast_tree_nonnull<ast::ClassDef>(file.tree);
-    EnforcePackagePrefix enforcePrefix(&pkg, isTestFile); // TODO ref?
+    EnforcePackagePrefix enforcePrefix(pkg, isTestFile);
     file.tree = ast::ShallowMap::apply(ctx, enforcePrefix, move(file.tree));
 
     auto wrapperName = isTestFile ? core::Names::Constants::PackageTests() : core::Names::Constants::PackageRegistry();
