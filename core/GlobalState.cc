@@ -1901,6 +1901,18 @@ FileRef GlobalState::findFileByPath(string_view path) const {
     return FileRef();
 }
 
+NameRef GlobalState::enterPackage(unique_ptr<packages::PackageInfo> pkg) {
+    // TODO enforce packaging enabled
+    auto nr = pkg->mangledName();
+    ENFORCE(packages.find(nr) == packages.end(), "Attempting to enter package {} multiple times", nr.show(*this));
+    for (const auto &prefix : pkg->pathPrefixes()) {
+        // TODO can we not copy
+        packagesByPathPrefix[prefix] = nr;
+    }
+    packages[nr] = move(pkg);
+    return nr;
+}
+
 unique_ptr<GlobalState> GlobalState::markFileAsTombStone(unique_ptr<GlobalState> what, FileRef fref) {
     ENFORCE(fref.id() < what->filesUsed());
     what->files[fref.id()]->sourceType = File::Type::TombStone;

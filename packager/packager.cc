@@ -84,6 +84,14 @@ struct Import {
 
 class PackageInfoImpl final : public sorbet::core::packages::PackageInfo {
 public:
+    core::NameRef mangledName() const {
+        return name.mangledName;
+    }
+
+    const std::vector<std::string> &pathPrefixes() const {
+        return packagePathPrefixes;
+    }
+
     // The possible path prefixes associated with files in the package, including path separator at end.
     vector<std::string> packagePathPrefixes;
     PackageName name;
