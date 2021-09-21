@@ -19,7 +19,10 @@ cc_library(
     hdrs = [
         "GlobalSubstitution.h",
         "core.h",
-    ] + glob(["errors/*.h"]) + glob(["lsp/*.h", "packages/*.h"]),
+    ] + glob(["errors/*.h"]) + glob([
+        "lsp/*.h",
+        "packages/*.h",
+    ]),
     linkstatic = select({
         "//tools/config:linkshared": 0,
         "//conditions:default": 1,
