@@ -1910,7 +1910,17 @@ NameRef GlobalState::enterPackage(unique_ptr<packages::PackageInfo> pkg) {
         packagesByPathPrefix[prefix] = nr;
     }
     packages[nr] = move(pkg);
+    // TODO wasModified_ = true?
     return nr;
+}
+
+NameRef GlobalState::lookupPackage(NameRef pkgMangledName) const {
+    ENFORCE(pkgMangledName.exists());
+    auto it = packages.find(pkgMangledName);
+    if (it == packages.end()) {
+        return NameRef::noName();
+    }
+    return it->first;
 }
 
 unique_ptr<GlobalState> GlobalState::markFileAsTombStone(unique_ptr<GlobalState> what, FileRef fref) {

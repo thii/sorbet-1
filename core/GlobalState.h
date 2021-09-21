@@ -12,6 +12,10 @@
 #include "main/pipeline/semantic_extension/SemanticExtension.h"
 #include <memory>
 
+namespace sorbet::packager {
+class PackagerImpl;
+} // namespace sorbet::packager
+
 namespace sorbet::core {
 
 class NameRef;
@@ -55,6 +59,7 @@ class GlobalState final {
     friend class UnfreezeSymbolTable;
     friend class UnfreezeFileTable;
     friend struct NameRefDebugCheck;
+    friend class sorbet::packager::PackagerImpl;
 
     // Private constructor that allows a specific globalStateId. Used in `makeEmptyGlobalStateForHashing` to avoid
     // contention on the global state ID atomic.
@@ -152,6 +157,7 @@ public:
     FileRef findFileByPath(std::string_view path) const;
 
     NameRef enterPackage(std::unique_ptr<packages::PackageInfo> pkg);
+    NameRef lookupPackage(NameRef pkgMangledName) const;
 
     void mangleRenameSymbol(SymbolRef what, NameRef origName);
     spdlog::logger &tracer() const;

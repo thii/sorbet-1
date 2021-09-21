@@ -92,6 +92,10 @@ public:
         return packagePathPrefixes;
     }
 
+    bool exists() const {
+        return name.mangledName.exists();
+    }
+
     // The possible path prefixes associated with files in the package, including path separator at end.
     vector<std::string> packagePathPrefixes;
     PackageName name;
@@ -102,99 +106,19 @@ public:
     // List of exported items that form the body of this package's public API.
     // These are copied into every package that imports this package.
     vector<FullyQualifiedName> exports;
+
+    // PackageInfoImpl is the only implementation of PackageInfo
+    static PackageInfoImpl &from(sorbet::core::packages::PackageInfo *pkg) {
+        ENFORCE(pkg != nullptr);
+        return *reinterpret_cast<PackageInfoImpl *>(pkg); // TODO there's probably a nicer way to do this
+    }
+
+    PackageInfoImpl() = default;
+    PackageInfoImpl(const PackageInfoImpl &) = delete;
+    PackageInfoImpl &operator=(const PackageInfoImpl &) = delete;
 };
 
-/**
- * Container class that facilitates thread-safe read-only access to packages.
- */
-class PackageDB final {
-private:
-    // The only thread that is allowed write access to this class.
-    const std::thread::id owner;
-    UnorderedMap<std::string, shared_ptr<const PackageInfoImpl>> packageInfoByPathPrefix;
-    bool finalized = false;
-    UnorderedMap<core::NameRef, shared_ptr<const PackageInfoImpl>> packageInfoByMangledName;
-
-public:
-    PackageDB() : owner(this_thread::get_id()) {}
-
-    void addPackage(core::Context ctx, shared_ptr<PackageInfoImpl> pkg) {
-        ENFORCE(owner == this_thread::get_id());
-        if (finalized) {
-            Exception::raise("Cannot add additional packages after finalizing PackageDB");
-        }
-        if (pkg == nullptr) {
-            // There was an error creating a PackageInfoImpl for this file, and getPackageInfo has already surfaced that
-            // error to the user. Nothing to do here.
-            return;
-        }
-        auto it = packageInfoByMangledName.find(pkg->name.mangledName);
-        if (it != packageInfoByMangledName.end()) {
-            if (auto e = ctx.beginError(pkg->loc.offsets(), core::errors::Packager::RedefinitionOfPackage)) {
-                auto pkgName = pkg->name.toString(ctx);
-                e.setHeader("Redefinition of package `{}`", pkgName);
-                e.addErrorLine(it->second->loc, "Package `{}` originally defined here", pkgName);
-            }
-        } else {
-            packageInfoByMangledName[pkg->name.mangledName] = pkg;
-        }
-
-        for (const std::string &packagePathPrefix : pkg->packagePathPrefixes) {
-            packageInfoByPathPrefix[packagePathPrefix] = pkg;
-        }
-    }
-
-    void finalizePackages() {
-        ENFORCE(owner == this_thread::get_id());
-        finalized = true;
-    }
-
-    /**
-     * Given a file of type PACKAGE, return its PackageInfoImpl or nullptr if one does not exist.
-     */
-    const PackageInfoImpl *getPackageByFile(core::Context ctx, core::FileRef packageFile) const {
-        const std::string_view path = packageFile.data(ctx).path();
-        const auto &it = packageInfoByPathPrefix.find(path.substr(0, path.find_last_of('/') + 1));
-        if (it == packageInfoByPathPrefix.end()) {
-            return nullptr;
-        }
-        return it->second.get();
-    }
-
-    /**
-     * Given the mangled name for a package (e.g., Foo::Bar's mangled name is Foo_Bar_Package), return that package's
-     * info or nullptr if it does not exist.
-     */
-    const PackageInfoImpl *getPackageByMangledName(core::NameRef name) const {
-        const auto &it = packageInfoByMangledName.find(name);
-        if (it == packageInfoByMangledName.end()) {
-            return nullptr;
-        }
-        return it->second.get();
-    }
-
-    /**
-     * Given a context, return the active package or nullptr if one does not exist.
-     */
-    const PackageInfoImpl *getPackageForContext(core::Context ctx) const {
-        if (!finalized) {
-            Exception::raise("Cannot map files to packages until all packages are added and PackageDB is finalized");
-        }
-
-        std::string_view path = ctx.file.data(ctx).path();
-        int curPrefixPos = path.find_last_of('/');
-        while (curPrefixPos != std::string::npos) {
-            const auto &it = packageInfoByPathPrefix.find(path.substr(0, curPrefixPos + 1));
-            if (it != packageInfoByPathPrefix.end()) {
-                return it->second.get();
-            }
-
-            curPrefixPos = path.find_last_of('/', curPrefixPos - 1);
-        }
-
-        return nullptr;
-    }
-};
+static PackageInfoImpl NO_PKG = PackageInfoImpl();
 
 void checkPackageName(core::Context ctx, ast::UnresolvedConstantLit *constLit) {
     while (constLit != nullptr) {
@@ -868,106 +792,15 @@ private:
     }
 };
 
-// Add:
-//    module <PackageRegistry>::Mangled_Name_Package
-//      module A::B::C
-//        D = Mangled_Imported_Package::A::B::C::D
-//      end
-//      ...
-//    end
-// ...to __package.rb files to set up the package namespace.
-ast::ParsedFile rewritePackage(core::Context ctx, ast::ParsedFile file, const PackageDB &packageDB) {
-    ast::ClassDef::RHS_store importedPackages;
-    ast::ClassDef::RHS_store testImportedPackages;
-
-    auto package = packageDB.getPackageByFile(ctx, file.file);
-    if (package == nullptr) {
-        // We already produced an error on this package when producing its package info.
-        // The correct course of action is to abort the transform.
-        return file;
-    }
-
-    // Sanity check: __package.rb files _must_ be typed: strict
-    if (file.file.data(ctx).originalSigil < core::StrictLevel::Strict) {
-        if (auto e = ctx.beginError(core::LocOffsets{0, 0}, core::errors::Packager::PackageFileMustBeStrict)) {
-            e.setHeader("Package files must be at least `{}`", "# typed: strict");
-        }
-    }
-
-    {
-        UnorderedMap<core::NameRef, core::LocOffsets> importedNames;
-        ImportTreeBuilder treeBuilder(*package);
-        for (auto &import : package->importedPackageNames) {
-            auto &imported = import.name;
-            auto *importedPackage = packageDB.getPackageByMangledName(imported.mangledName);
-            if (importedPackage == nullptr) {
-                if (auto e = ctx.beginError(imported.loc, core::errors::Packager::PackageNotFound)) {
-                    e.setHeader("Cannot find package `{}`", imported.toString(ctx));
-                }
-                continue;
-            }
-
-            if (importedNames.contains(imported.mangledName)) {
-                if (auto e = ctx.beginError(imported.loc, core::errors::Packager::InvalidImportOrExport)) {
-                    e.setHeader("Duplicate package import `{}`", imported.toString(ctx));
-                    e.addErrorLine(core::Loc(ctx.file, importedNames[imported.mangledName]),
-                                   "Previous package import found here");
-                }
-            } else {
-                importedNames[imported.mangledName] = imported.loc;
-                treeBuilder.mergeImports(*importedPackage, import);
-            }
-        }
-
-        importedPackages = treeBuilder.makeModule(ctx, ImportType::Normal);
-        // Include an empty class definition <Mangled_Pkg_A>::Pkg::A::<Magic> in <PackageRegistry>.
-        // This ensures that the refernce to <PackageRegistry>::<Mangled_Pkg_A>::Pkg::A always
-        // exists.
-        auto stubName = prependScope(
-            name2Expr(core::Names::Constants::Magic(), package->name.fullName.toLiteral(core::LocOffsets::none())),
-            name2Expr(package->name.mangledName));
-        auto stubClass = ast::MK::Class(core::LocOffsets::none(), core::LocOffsets::none(), move(stubName), {}, {});
-        importedPackages.emplace_back(move(stubClass));
-
-        testImportedPackages = treeBuilder.makeModule(ctx, ImportType::Test);
-
-        // In the test namespace for this package add an alias to give tests full access to the
-        // packaged code:
-        // module <PackageTests>
-        //   <Imports>
-        //   <Mangled_Pkg_A>::Pkg::A = <PackageRegistry>::<Mangled_Pkg_A>::Pkg::A
-        // end
-        auto assignRhs =
-            prependPackageScope(package->name.fullName.toLiteral(core::LocOffsets::none()), package->name.mangledName);
-        auto assign = ast::MK::Assign(core::LocOffsets::none(),
-                                      prependScope(package->name.fullName.toLiteral(core::LocOffsets::none()),
-                                                   name2Expr(package->name.mangledName)),
-                                      std::move(assignRhs));
-        testImportedPackages.emplace_back(std::move(assign));
-    }
-
-    auto packageNamespace =
-        ast::MK::Module(core::LocOffsets::none(), core::LocOffsets::none(),
-                        name2Expr(core::Names::Constants::PackageRegistry()), {}, std::move(importedPackages));
-    auto testPackageNamespace =
-        ast::MK::Module(core::LocOffsets::none(), core::LocOffsets::none(),
-                        name2Expr(core::Names::Constants::PackageTests()), {}, std::move(testImportedPackages));
-
-    auto &rootKlass = ast::cast_tree_nonnull<ast::ClassDef>(file.tree);
-    rootKlass.rhs.emplace_back(move(packageNamespace));
-    rootKlass.rhs.emplace_back(move(testPackageNamespace));
-    return file;
-}
-
 ast::ParsedFile rewritePackagedFile(core::Context ctx, ast::ParsedFile file, core::NameRef packageMangledName,
-                                    const PackageInfoImpl *pkg, bool isTestFile) {
+                                    const PackageInfoImpl &pkg, bool isTestFile) {
     if (ast::isa_tree<ast::EmptyTree>(file.tree)) {
         // Nothing to wrap. This occurs when a file is marked typed: Ignore.
         return file;
     }
 
     auto &rootKlass = ast::cast_tree_nonnull<ast::ClassDef>(file.tree);
-    EnforcePackagePrefix enforcePrefix(pkg, isTestFile);
+    EnforcePackagePrefix enforcePrefix(&pkg, isTestFile); // TODO ref?
     file.tree = ast::ShallowMap::apply(ctx, enforcePrefix, move(file.tree));
 
     auto wrapperName = isTestFile ? core::Names::Constants::PackageTests() : core::Names::Constants::PackageRegistry();
@@ -1000,6 +833,128 @@ bool checkContainsAllPackages(const core::GlobalState &gs, const vector<ast::Par
 
 } // namespace
 
+class PackagerImpl {
+public:
+    static const PackageInfoImpl &getPackageForFile(const core::GlobalState &gs, core::FileRef file);
+    static const PackageInfoImpl &getPackageInfo(const core::GlobalState &gs, core::NameRef mangledName);
+
+    static ast::ParsedFile rewritePackage(core::Context ctx, ast::ParsedFile file);
+};
+
+const PackageInfoImpl &PackagerImpl::getPackageForFile(const core::GlobalState &gs, core::FileRef file) {
+    std::string_view path = file.data(gs).path();
+    int curPrefixPos = path.find_last_of('/');
+    while (curPrefixPos != std::string::npos) {
+        const auto &it = gs.packagesByPathPrefix.find(path.substr(0, curPrefixPos + 1));
+        if (it != gs.packagesByPathPrefix.end()) {
+            const auto &pkg = getPackageInfo(gs, it->second);
+            ENFORCE(pkg.exists());
+            return pkg;
+        }
+        curPrefixPos = path.find_last_of('/', curPrefixPos - 1);
+    }
+    return NO_PKG;
+}
+
+const PackageInfoImpl &PackagerImpl::getPackageInfo(const core::GlobalState &gs, core::NameRef mangledName) {
+    auto it = gs.packages.find(mangledName);
+    if (it == gs.packages.end()) {
+        return NO_PKG;
+    }
+    return PackageInfoImpl::from(it->second.get());
+}
+
+// Add:
+//    module <PackageRegistry>::Mangled_Name_Package
+//      module A::B::C
+//        D = Mangled_Imported_Package::A::B::C::D
+//      end
+//      ...
+//    end
+// ...to __package.rb files to set up the package namespace.
+ast::ParsedFile PackagerImpl::rewritePackage(core::Context ctx, ast::ParsedFile file) {
+    ast::ClassDef::RHS_store importedPackages;
+    ast::ClassDef::RHS_store testImportedPackages;
+
+    auto &package = getPackageForFile(ctx, file.file);
+    if (!package.exists()) {
+        // We already produced an error on this package when producing its package info.
+        // The correct course of action is to abort the transform.
+        return file;
+    }
+
+    // Sanity check: __package.rb files _must_ be typed: strict
+    if (file.file.data(ctx).originalSigil < core::StrictLevel::Strict) {
+        if (auto e = ctx.beginError(core::LocOffsets{0, 0}, core::errors::Packager::PackageFileMustBeStrict)) {
+            e.setHeader("Package files must be at least `{}`", "# typed: strict");
+        }
+    }
+
+    {
+        UnorderedMap<core::NameRef, core::LocOffsets> importedNames;
+        ImportTreeBuilder treeBuilder(package);
+        for (auto &import : package.importedPackageNames) {
+            auto &imported = import.name;
+            auto &importedPackage = getPackageInfo(ctx, imported.mangledName);
+            if (!importedPackage.exists()) {
+                if (auto e = ctx.beginError(imported.loc, core::errors::Packager::PackageNotFound)) {
+                    e.setHeader("Cannot find package `{}`", imported.toString(ctx));
+                }
+                continue;
+            }
+
+            if (importedNames.contains(imported.mangledName)) {
+                if (auto e = ctx.beginError(imported.loc, core::errors::Packager::InvalidImportOrExport)) {
+                    e.setHeader("Duplicate package import `{}`", imported.toString(ctx));
+                    e.addErrorLine(core::Loc(ctx.file, importedNames[imported.mangledName]),
+                                   "Previous package import found here");
+                }
+            } else {
+                importedNames[imported.mangledName] = imported.loc;
+                treeBuilder.mergeImports(importedPackage, import);
+            }
+        }
+
+        importedPackages = treeBuilder.makeModule(ctx, ImportType::Normal);
+        // Include an empty class definition <Mangled_Pkg_A>::Pkg::A::<Magic> in <PackageRegistry>.
+        // This ensures that the refernce to <PackageRegistry>::<Mangled_Pkg_A>::Pkg::A always
+        // exists.
+        auto stubName = prependScope(
+            name2Expr(core::Names::Constants::Magic(), package.name.fullName.toLiteral(core::LocOffsets::none())),
+            name2Expr(package.name.mangledName));
+        auto stubClass = ast::MK::Class(core::LocOffsets::none(), core::LocOffsets::none(), move(stubName), {}, {});
+        importedPackages.emplace_back(move(stubClass));
+
+        testImportedPackages = treeBuilder.makeModule(ctx, ImportType::Test);
+
+        // In the test namespace for this package add an alias to give tests full access to the
+        // packaged code:
+        // module <PackageTests>
+        //   <Imports>
+        //   <Mangled_Pkg_A>::Pkg::A = <PackageRegistry>::<Mangled_Pkg_A>::Pkg::A
+        // end
+        auto assignRhs =
+            prependPackageScope(package.name.fullName.toLiteral(core::LocOffsets::none()), package.name.mangledName);
+        auto assign = ast::MK::Assign(core::LocOffsets::none(),
+                                      prependScope(package.name.fullName.toLiteral(core::LocOffsets::none()),
+                                                   name2Expr(package.name.mangledName)),
+                                      std::move(assignRhs));
+        testImportedPackages.emplace_back(std::move(assign));
+    }
+
+    auto packageNamespace =
+        ast::MK::Module(core::LocOffsets::none(), core::LocOffsets::none(),
+                        name2Expr(core::Names::Constants::PackageRegistry()), {}, std::move(importedPackages));
+    auto testPackageNamespace =
+        ast::MK::Module(core::LocOffsets::none(), core::LocOffsets::none(),
+                        name2Expr(core::Names::Constants::PackageTests()), {}, std::move(testImportedPackages));
+
+    auto &rootKlass = ast::cast_tree_nonnull<ast::ClassDef>(file.tree);
+    rootKlass.rhs.emplace_back(move(packageNamespace));
+    rootKlass.rhs.emplace_back(move(testPackageNamespace));
+    return file;
+}
+
 vector<ast::ParsedFile> Packager::run(core::GlobalState &gs, WorkerPool &workers, vector<ast::ParsedFile> files,
                                       const vector<std::string> &extraPackageFilesDirectoryPrefixes) {
     Timer timeit(gs.tracer(), "packager");
@@ -1007,19 +962,27 @@ vector<ast::ParsedFile> Packager::run(core::GlobalState &gs, WorkerPool &workers
     fast_sort(files, [](const auto &a, const auto &b) -> bool { return a.file < b.file; });
 
     // Step 1: Find packages and determine their imports/exports.
-    PackageDB packageDB;
     {
         Timer timeit(gs.tracer(), "packager.findPackages");
         core::UnfreezeNameTable unfreeze(gs);
+        // TODO add an UnfreezePackages?
         for (auto &file : files) {
             if (FileOps::getFileName(file.file.data(gs).path()) == PACKAGE_FILE_NAME) {
                 file.file.data(gs).sourceType = core::File::Type::Package;
                 core::MutableContext ctx(gs, core::Symbols::root(), file.file);
-                packageDB.addPackage(ctx, getPackageInfo(ctx, file, extraPackageFilesDirectoryPrefixes));
+                auto pkg = getPackageInfo(ctx, file, extraPackageFilesDirectoryPrefixes);
+                if (gs.lookupPackage(pkg->mangledName()).exists()) {
+                    if (auto e = ctx.beginError(pkg->loc.offsets(), core::errors::Packager::RedefinitionOfPackage)) {
+                        auto pkgName = pkg->name.toString(ctx);
+                        e.setHeader("Redefinition of package `{}`", pkgName);
+                        auto &prevPkg = PackagerImpl::getPackageInfo(gs, pkg->mangledName());
+                        e.addErrorLine(prevPkg.loc, "Package `{}` originally defined here", pkgName);
+                    }
+                } else {
+                    gs.enterPackage(move(pkg));
+                }
             }
         }
-        // We're done adding packages.
-        packageDB.finalizePackages();
     }
 
     {
@@ -1028,7 +991,7 @@ vector<ast::ParsedFile> Packager::run(core::GlobalState &gs, WorkerPool &workers
         for (auto &file : files) {
             if (file.file.data(gs).sourceType == core::File::Type::Package) {
                 core::Context ctx(gs, core::Symbols::root(), file.file);
-                file = rewritePackage(ctx, move(file), packageDB);
+                file = PackagerImpl::rewritePackage(ctx, move(file));
             }
         }
     }
@@ -1043,9 +1006,7 @@ vector<ast::ParsedFile> Packager::run(core::GlobalState &gs, WorkerPool &workers
             fileq->push(move(file), 1);
         }
 
-        const PackageDB &constPkgDB = packageDB;
-
-        workers.multiplexJob("rewritePackagedFiles", [&gs, constPkgDB, fileq, resultq]() {
+        workers.multiplexJob("rewritePackagedFiles", [&gs, fileq, resultq]() {
             Timer timeit(gs.tracer(), "packager.rewritePackagedFilesWorker");
             vector<ast::ParsedFile> results;
             u4 filesProcessed = 0;
@@ -1056,8 +1017,9 @@ vector<ast::ParsedFile> Packager::run(core::GlobalState &gs, WorkerPool &workers
                     auto &file = job.file.data(gs);
                     if (file.sourceType == core::File::Type::Normal) {
                         core::Context ctx(gs, core::Symbols::root(), job.file);
-                        if (auto pkg = constPkgDB.getPackageForContext(ctx)) {
-                            job = rewritePackagedFile(ctx, move(job), pkg->name.mangledName, pkg, isTestFile(gs, file));
+                        auto &pkg = PackagerImpl::getPackageForFile(ctx, ctx.file);
+                        if (pkg.exists()) {
+                            job = rewritePackagedFile(ctx, move(job), pkg.name.mangledName, pkg, isTestFile(gs, file));
                         } else {
                             // Don't transform, but raise an error on the first line.
                             if (auto e =
