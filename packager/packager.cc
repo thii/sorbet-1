@@ -10,8 +10,8 @@
 #include "common/formatting.h"
 #include "common/sort.h"
 #include "core/Unfreeze.h"
-#include "core/packages/PackageInfo.h"
 #include "core/errors/packager.h"
+#include "core/packages/PackageInfo.h"
 #include <sys/stat.h>
 
 using namespace std;
@@ -699,7 +699,7 @@ bool pathExists(const std::string &path) {
 // Sanity checks package files, mutates arguments to export / export_methods to point to item in namespace,
 // builds up the expression injected into packages that import the package, and codegens the <PackagedMethods>  module.
 unique_ptr<PackageInfoImpl> getPackageInfo(core::MutableContext ctx, ast::ParsedFile &package,
-                                       const vector<std::string> &extraPackageFilesDirectoryPrefixes) {
+                                           const vector<std::string> &extraPackageFilesDirectoryPrefixes) {
     ENFORCE(package.file.exists());
     ENFORCE(package.file.data(ctx).sourceType == core::File::Type::Package);
     // Assumption: Root of AST is <root> class.

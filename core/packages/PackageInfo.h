@@ -20,5 +20,5 @@ public:
     PackageInfo &operator=(PackageInfo &&) = delete;
     PackageInfo &operator=(const PackageInfo &) = delete;
 };
-} // namespace sorbet::core::package
+} // namespace sorbet::core::packages
 #endif
