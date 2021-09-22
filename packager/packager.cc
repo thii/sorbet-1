@@ -96,6 +96,10 @@ public:
         return name.mangledName.exists();
     }
 
+    core::Loc definitionLoc() const {
+        return loc;
+    }
+
     // The possible path prefixes associated with files in the package, including path separator at end.
     vector<std::string> packagePathPrefixes;
     PackageName name;
@@ -113,8 +117,12 @@ public:
         return *reinterpret_cast<PackageInfoImpl *>(pkg); // TODO there's probably a nicer way to do this
     }
 
+    unique_ptr<PackageInfo> deepCopy() const {
+        return make_unique<PackageInfoImpl>(*this);
+    }
+
     PackageInfoImpl() = default;
-    PackageInfoImpl(const PackageInfoImpl &) = delete;
+    explicit PackageInfoImpl(const PackageInfoImpl &) = default;
     PackageInfoImpl &operator=(const PackageInfoImpl &) = delete;
 };
 
@@ -613,13 +621,6 @@ struct PackageInfoFinder {
     }
 };
 
-// TODO (aadi-stripe) we can avoid syscalls if we invent an efficient way of looking up
-// directories in the source tree via GlobalState. Might be tied to https://github.com/sorbet/sorbet/issues/4509
-bool pathExists(const std::string &path) {
-    struct stat buffer;
-    return (stat(path.c_str(), &buffer) == 0);
-}
-
 // Sanity checks package files, mutates arguments to export / export_methods to point to item in namespace,
 // builds up the expression injected into packages that import the package, and codegens the <PackagedMethods>  module.
 unique_ptr<PackageInfoImpl> getPackageInfo(core::MutableContext ctx, ast::ParsedFile &package,
@@ -641,9 +642,7 @@ unique_ptr<PackageInfoImpl> getPackageInfo(core::MutableContext ctx, ast::Parsed
 
         for (const string &prefix : extraPackageFilesDirectoryPrefixes) {
             string additionalDirPath = absl::StrCat(prefix, dirNameFromShortName, "/");
-            if (pathExists(additionalDirPath)) {
-                finder.info->packagePathPrefixes.emplace_back(std::move(additionalDirPath));
-            }
+            finder.info->packagePathPrefixes.emplace_back(std::move(additionalDirPath));
         }
     }
     return move(finder.info);
@@ -971,7 +970,13 @@ vector<ast::ParsedFile> Packager::run(core::GlobalState &gs, WorkerPool &workers
                 file.file.data(gs).sourceType = core::File::Type::Package;
                 core::MutableContext ctx(gs, core::Symbols::root(), file.file);
                 auto pkg = getPackageInfo(ctx, file, extraPackageFilesDirectoryPrefixes);
-                if (gs.lookupPackage(pkg->mangledName()).exists()) {
+                if (pkg == nullptr) {
+                    // There was an error creating a PackageInfo for this file, and getPackageInfo has already surfaced
+                    // that error to the user. Nothing to do here.
+                    continue;
+                }
+                auto &prevPgk = PackagerImpl::getPackageInfo(gs, pkg->mangledName());
+                if (prevPgk.exists() && prevPgk.definitionLoc() != pkg->definitionLoc()) {
                     if (auto e = ctx.beginError(pkg->loc.offsets(), core::errors::Packager::RedefinitionOfPackage)) {
                         auto pkgName = pkg->name.toString(ctx);
                         e.setHeader("Redefinition of package `{}`", pkgName);
