@@ -782,16 +782,13 @@ VALUE sorbet_rb_iterate(VALUE (*it_proc)(VALUE), VALUE data1, rb_block_call_func
     EC_PUSH_TAG(ec);
     state = EC_EXEC_TAG();
     if (state == 0) {
-    iter_retry :
-
-    {
+    iter_retry:
         VALUE block_handler;
 
         struct rb_captured_block *captured = VM_CFP_TO_CAPTURED_BLOCK(cfp);
         captured->code.ifunc = ifunc;
         block_handler = VM_BH_FROM_IFUNC_BLOCK(captured);
         vm_passed_block_handler_set(ec, block_handler);
-    }
 
         retval = (*it_proc)(data1);
     } else if (state == TAG_BREAK || state == TAG_RETRY) {
