@@ -188,6 +188,9 @@ SORBET_ALIVE(VALUE, sorbet_run_exception_handling,
               // The special value indicating that we need to retry.
               VALUE retrySingleton, long exceptionValueIndex, long exceptionValueLevel));
 
+SORBET_ALIVE(VALUE, sorbet_rb_iterate,
+             (VALUE(*body)(VALUE), VALUE data1, rb_block_call_func_t bl_proc, int minArgs, int maxArgs, VALUE data2));
+
 // The next several functions exist to convert Ruby definitions into LLVM IR, and
 // are always inlined as a consequence.
 
@@ -1930,7 +1933,7 @@ static VALUE sorbet_iterMethod(VALUE obj) {
 SORBET_INLINE
 VALUE sorbet_callFuncBlockWithCache(struct FunctionInlineCache *cache, BlockFFIType blockImpl, int blkMinArgs,
                                     int blkMaxArgs, VALUE closure) {
-    return rb_iterate(sorbet_iterMethod, (VALUE)cache, blockImpl, closure);
+    return sorbet_rb_iterate(sorbet_iterMethod, (VALUE)cache, blockImpl, blkMinArgs, blkMaxArgs, closure);
 }
 KEEP_ALIVE(sorbet_callFuncBlockWithCache);
 
